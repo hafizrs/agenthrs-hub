@@ -75,6 +75,27 @@ Pauses this issue. Follow-up comments are ignored until you resume.
 
 Resumes the **same window and same branch**.
 
+## Which window does stop/continue hit?
+
+GitHub has no other handle except **the issue you comment on**.
+
+| You do | What we stop/continue |
+|---|---|
+| Comment `/stophs` on issue **#12** | **Active** window of #12 (the latest start/new on that issue) |
+| `/stophs w1` on #12 | Window **w1** of #12 |
+| `/continuehrs w2` on #12 | Window **w2** of #12 |
+| Same commands on issue **#13** | #13’s windows, never #12 |
+
+A **new issue** is always a separate window. That is the simple way to run two tasks: two issues, comment on the one you mean.
+
+`/agenthrs new` on the **same** issue creates **w2** on that issue. Then:
+
+- `/stophs` → stops **w2** (now active)
+- `/stophs w1` → stops the first window
+- `/continuehrs w1` → resumes the first window
+
+The bot labels each run **w1**, **w2**, … so you can copy that number. `/agenthrs queue` lists them.
+
 ## Keep current branch and push (opt-in)
 
 Default is still **create a new branch**. To stay on an existing branch and push:

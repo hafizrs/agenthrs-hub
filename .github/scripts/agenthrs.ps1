@@ -127,9 +127,65 @@ function Read-HiddenValue {
   param([string]$Text, [string]$Marker)
   if (-not $Text) { return $null }
   $pattern = [regex]::Escape($Marker) + "\s*([^\s<]+)\s*-->"
-  $match = [regex]::Match($Text, $pattern)
-  if ($match.Success) { return $match.Groups[1].Value.Trim() }
-  return $null
+  $found = [regex]::Matches($Text, $pattern)
+  if ($found.Count -eq 0) { return $null }
+  return $found[$found.Count - 1].Groups[1].Value.Trim()
+}
+
+function Get-MetaFromText {
+  param([string]$Text)
+  return @{
+    Session     = Read-HiddenValue -Text $Text -Marker $SessionMarker
+    Model       = Read-HiddenValue -Text $Text -Marker $ModelMarker
+    Workspace   = Read-HiddenValue -Text $Text -Marker $WorkspaceMarker
+    TargetRepo  = Read-HiddenValue -Text $Text -Marker $TargetRepoMarker
+    BaseBranch  = Read-HiddenValue -Text $Text -Marker $BaseBranchMarker
+    WorkBranch  = Read-HiddenValue -Text $Text -Marker $WorkBranchMarker
+    WindowId    = Read-HiddenValue -Text $Text -Marker $WindowMarker
+    KeepBranch  = ((Read-HiddenValue -Text $Text -Marker $KeepBranchMarker) -eq "true")
+    Push        = ((Read-HiddenValue -Text $Text -Marker $PushMarker) -eq "true")
+    RunId       = Read-HiddenValue -Text $Text -Marker $RunMarker
+  }
+}
+
+function Get-WindowMeta {
+  param($Repo, $Issue, [int]$WindowId)
+  try {
+    $comments = @(Get-IssueComments -Repo $Repo -Number $Issue.number)
+  } catch { return $null }
+  $chosen = $null
+  foreach ($c in $comments) {
+    if ($c.body -notmatch [regex]::Escape($BotMarker)) { continue }
+    $wid = Read-HiddenValue -Text $c.body -Marker $WindowMarker
+    if ($wid -eq "$WindowId") { $chosen = $c.body }
+  }
+  if (-not $chosen) { return $null }
+  return Get-MetaFromText -Text $chosen
+}
+
+function Format-WindowList {
+  param($Repo, $Issue, [string]$ActiveId)
+  try {
+    $comments = @(Get-IssueComments -Repo $Repo -Number $Issue.number)
+  } catch { $comments = @() }
+  $map = @{}
+  foreach ($c in $comments) {
+    if ($c.body -notmatch [regex]::Escape($BotMarker)) { continue }
+    $wid = Read-HiddenValue -Text $c.body -Marker $WindowMarker
+    if (-not $wid) { continue }
+    $map[$wid] = Get-MetaFromText -Text $c.body
+  }
+  if ($map.Count -eq 0) { return "No windows on this issue yet." }
+  $lines = @("Windows on this issue (comment here = this card):", "")
+  foreach ($wid in ($map.Keys | Sort-Object { [int]$_ })) {
+    $m = $map[$wid]
+    $star = if ($wid -eq "$ActiveId") { " **active**" } else { "" }
+    $lines += "- **w$wid**$star | branch ``$($m.WorkBranch)`` | session ``$($m.Session)``"
+  }
+  $lines += ""
+  $lines += "``/stophs`` or ``/continuehrs`` with no number = **active** window."
+  $lines += "``/stophs w1`` or ``/continuehrs w2`` picks a window."
+  return ($lines -join "`n")
 }
 
 function Resolve-Model {
@@ -235,6 +291,7 @@ function Parse-SlashCommands {
     WorkBranch   = $null
     KeepBranch   = $false
     Push         = $false
+    WindowId     = $null
     Prompt       = $null
     Expect       = $null
   }
@@ -244,12 +301,14 @@ function Parse-SlashCommands {
   $promptLines = New-Object System.Collections.Generic.List[string]
   foreach ($line in $lines) {
     $trim = $line.Trim()
-    if ($trim -match '^(?:\/)?(?:stophs|agenthrs\s+stop)\b') {
+    if ($trim -match '^(?:\/)?(?:stophs|agenthrs\s+stop)(?:\s+w?(\d+))?\s*$') {
       $result.Command = "stop"
+      if ($Matches[1]) { $result.WindowId = [int]$Matches[1] }
       continue
     }
-    if ($trim -match '^(?:\/)?(?:continuehrs|agenthrs\s+continue)\b') {
+    if ($trim -match '^(?:\/)?(?:continuehrs|agenthrs\s+continue)(?:\s+w?(\d+))?\s*$') {
       $result.Command = "continue"
+      if ($Matches[1]) { $result.WindowId = [int]$Matches[1] }
       continue
     }
     if ($trim -match '^(?:\/)?keepbranchhrs\b') {
@@ -260,9 +319,10 @@ function Parse-SlashCommands {
       $result.Push = $true
       continue
     }
-    if ($trim -match '^(?:\/)?agenthrs\s+(start|continue|new|stop|hold|queue|resume)\b') {
+    if ($trim -match '^(?:\/)?agenthrs\s+(start|continue|new|stop|hold|queue|resume)(?:\s+w?(\d+))?\b') {
       $result.Command = $Matches[1].ToLowerInvariant()
       if ($result.Command -eq "resume") { $result.Command = "continue" }
+      if ($Matches[2]) { $result.WindowId = [int]$Matches[2] }
       continue
     }
     if ($trim -match '^(?:\/)?(?:agenthrs\s+model|modelhrs)\s+(\S+)') {
@@ -324,18 +384,7 @@ function Get-StoredMeta {
     $comments = @(Get-IssueComments -Repo $Repo -Number $Issue.number)
     foreach ($c in $comments) { $blob += "$($c.body)`n" }
   } catch { }
-  return @{
-    Session     = Read-HiddenValue -Text $blob -Marker $SessionMarker
-    Model       = Read-HiddenValue -Text $blob -Marker $ModelMarker
-    Workspace   = Read-HiddenValue -Text $blob -Marker $WorkspaceMarker
-    TargetRepo  = Read-HiddenValue -Text $blob -Marker $TargetRepoMarker
-    BaseBranch  = Read-HiddenValue -Text $blob -Marker $BaseBranchMarker
-    WorkBranch  = Read-HiddenValue -Text $blob -Marker $WorkBranchMarker
-    WindowId    = Read-HiddenValue -Text $blob -Marker $WindowMarker
-    KeepBranch  = ((Read-HiddenValue -Text $blob -Marker $KeepBranchMarker) -eq "true")
-    Push        = ((Read-HiddenValue -Text $blob -Marker $PushMarker) -eq "true")
-    RunId       = Read-HiddenValue -Text $blob -Marker $RunMarker
-  }
+  return Get-MetaFromText -Text $blob
 }
 
 function Write-MetaComment {
@@ -459,6 +508,16 @@ if ($eventName -eq "issues" -and $event.action -eq "opened" -and $labelNames -no
 $parsedIssue = Parse-SlashCommands -Text ([string]$issue.body)
 $parsedComment = Parse-SlashCommands -Text $commentBody
 $stored = Get-StoredMeta -Repo $hub -Issue $issue
+$activeWindow = if ($stored.WindowId) { $stored.WindowId } else { "1" }
+if ($parsedComment.WindowId) {
+  $picked = Get-WindowMeta -Repo $hub -Issue $issue -WindowId $parsedComment.WindowId
+  if (-not $picked -or -not $picked.Session) {
+    $list = Format-WindowList -Repo $hub -Issue $issue -ActiveId $activeWindow
+    Add-IssueComment -Repo $hub -Number $issueNumber -Body "No **w$($parsedComment.WindowId)** on this issue yet.`n`n$list"
+    exit 0
+  }
+  $stored = $picked
+}
 
 if ($eventName -eq "issues" -and $labelName -eq $QueueLabel) {
   try {
@@ -519,15 +578,8 @@ if ($labelNames -contains "holdhrs" -and $command -notin @("start", "continue", 
 }
 
 if ($command -eq "queue") {
-  $branchNote = if ($stored.WorkBranch) { "Work branch: ``$($stored.WorkBranch)`` (from ``$($stored.BaseBranch)``)." } else { "No work branch yet. First ``/agenthrs start`` creates it from ``/basehrs``." }
-  Add-IssueComment -Repo $hub -Number $issueNumber -Body @"
-**This window only** (like Cursor chat):
-
-- Extra comments on **this issue** wait until the current run finishes, then start.
-- Other issues / windows do **not** wait on this card.
-- $branchNote
-- Same window does **not** create a second branch.
-"@
+  $list = Format-WindowList -Repo $hub -Issue $issue -ActiveId $activeWindow
+  Add-IssueComment -Repo $hub -Number $issueNumber -Body $list
   exit 0
 }
 
@@ -538,11 +590,15 @@ if ($command -eq "hold" -or $labelName -eq "holdhrs") {
 }
 
 if ($command -eq "stop") {
-  Set-StatusLabel -Repo $hub -Issue $issue -Status "holdhrs"
+  $stopId = if ($stored.WindowId) { $stored.WindowId } else { $activeWindow }
+  $stoppingActive = ("$stopId" -eq "$activeWindow")
+  if ($stoppingActive) {
+    Set-StatusLabel -Repo $hub -Issue $issue -Status "holdhrs"
+  }
   if ($stored.RunId) {
     try { Invoke-GitHub -Method POST -Path "/repos/$($hub.Full)/actions/runs/$($stored.RunId)/cancel" | Out-Null } catch { }
   }
-  Add-IssueComment -Repo $hub -Number $issueNumber -Body "Stop requested. This window is paused. ``/agenthrs continue`` or ``/continuehrs`` resumes the same window and branch."
+  Add-IssueComment -Repo $hub -Number $issueNumber -Body "Stopped **w$stopId**$(if ($stoppingActive) { ' (active window on this issue)' } else { '' }). Same branch is kept. Resume with ``/continuehrs w$stopId`` or ``/continuehrs`` for the active window."
   exit 0
 }
 
@@ -646,6 +702,7 @@ $prompt
 Add-IssueComment -Repo $hub -Number $issueNumber -Body @"
 Starting on **agentdesk**.
 
+- Window: **w$windowId** (this issue's $(if ($newWindow) { 'new' } else { 'active' }) window)
 - Session: **$(if ($newWindow) { 'new window' } else { 'same window' })**
 - Git: $branchAction
 - Push: **$(if ($allowPush) { 'allowed' } else { 'off' })**
@@ -654,7 +711,9 @@ Starting on **agentdesk**.
 - Workspace: ``$workspaceDisplay``
 - Command: ``/agenthrs $command``
 
-Follow-ups on **this issue** wait until this run finishes, then continue on the same branch. Other issues are separate windows.
+Stop this window: ``/stophs w$windowId`` (or ``/stophs`` if it stays the active one).
+Continue: ``/continuehrs w$windowId``.
+Other issues are other windows.
 "@
 
 $run = $null
@@ -691,11 +750,11 @@ $(Truncate $run.Output)
 </details>
 
 Next:
-- Comment on this issue: waits, then **same window / same branch**
-- ``/agenthrs stop`` or ``/stophs``: pause this window
-- ``/agenthrs continue`` or ``/continuehrs``: resume this window
-- ``/keepbranchhrs`` + ``/branchhrs main`` + ``/pushhrs``: no new branch, stay and push
-- ``/agenthrs new``: new window and a **new branch** (default)
+- Comment on this issue: **active window** (latest), same branch
+- ``/stophs`` / ``/continuehrs``: active window on **this issue**
+- ``/stophs w1`` / ``/continuehrs w2``: that numbered window
+- ``/agenthrs queue``: list windows on this issue
+- ``/agenthrs new``: new window **w(n+1)** on this issue
 "@
 
 if ($failed) { exit 1 }
