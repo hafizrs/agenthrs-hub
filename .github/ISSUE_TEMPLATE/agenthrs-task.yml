@@ -1,0 +1,80 @@
+name: agenthrs task
+description: All fields optional. Empty = defaults (this hub, main, auto model, new branch, no push).
+title: "[agenthrs] "
+labels: ["agenthrs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Command from **this hub**. You must say which code repo to edit (`Target repo` or `/repohrs owner/name`).
+        Other fields optional. Defaults: `main`, model `auto`, workspace `root`, **new branch**, no push.
+        Stop later with `/stophs`. Resume with `/continuehrs`.
+  - type: input
+    id: repo
+    attributes:
+      label: Target repo
+      description: Code repo to edit (not this hub). Example hafizrs/pm
+      placeholder: hafizrs/pm
+    validations:
+      required: true
+  - type: input
+    id: base
+    attributes:
+      label: Base branch
+      description: Optional. Default = main. Used only when creating a new branch.
+      placeholder: main
+  - type: input
+    id: branch
+    attributes:
+      label: Working branch
+      description: Optional. Default = auto-name agenthrs/hub-N-w1. With "Keep existing branch", this is the branch to stay on.
+      placeholder: agenthrs/login-validation
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      description: Optional. Default = auto.
+      options:
+        - auto
+        - composer-2.5
+        - composer-2.5-fast
+        - cursor-grok-4.6-high
+        - claude-sonnet-5-thinking-high
+        - claude-opus-5-thinking-high
+        - gpt-5.4-high
+      default: 0
+  - type: dropdown
+    id: workspace
+    attributes:
+      label: Workspace
+      description: Optional. Default = root of the target repo.
+      options:
+        - root
+        - pm
+        - VibeDocx
+        - finally-gsd
+        - kanban
+      default: 0
+  - type: dropdown
+    id: session
+    attributes:
+      label: Session
+      description: Optional. Default = new window.
+      options:
+        - New window
+        - Continue same window
+      default: 0
+  - type: checkboxes
+    id: options
+    attributes:
+      label: Options
+      description: Default is create a new branch and do not push.
+      options:
+        - label: Keep existing branch (do not create a new one)
+        - label: Allow git push
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: Optional. If empty, the issue title is the task.
+      placeholder: Add email validation on the login form.
